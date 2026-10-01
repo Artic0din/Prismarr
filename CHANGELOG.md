@@ -5,6 +5,11 @@ All notable changes to Prismarr are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Tracearr activity page (optional).** A read-only integration with [Tracearr](https://github.com/connorgallopo/tracearr), the Plex / Jellyfin / Emby monitoring tool (a Tautulli alternative). Configure the URL and a public API key (`trr_pub_…`, generated in Tracearr → Settings) in `/admin/settings`. It has a kill switch, a Test connection button, a dashboard health chip and the same circuit breaker as the other services. A dedicated **Tracearr** page (own sidebar entry) shows now-playing cards refreshed every 10 s, today / 30-day overview tiles, plays-over-time, by-hour, by-day-of-week, per-platform, stream-quality and concurrent-stream charts with a 7-day / 30-day / 1-year toggle, a paged watch-history grid and a users table. Only GET endpoints of the public API v1 are used (never stream termination). The key never leaves the server, responses are allow-list sanitised (no IPs, user ids or raw codec payloads), posters go through a server-side, SSRF-guarded image proxy, and every section fails open independently. The dashboard's activity widget (now playing + recently watched) and the sidebar streaming pill can be fed by Tracearr: a new **Live activity source** display setting (Automatic — Tautulli first —, Tautulli or Tracearr) picks the service when both are configured, falling back to the other one if the chosen service isn't set up; fed by Tracearr, the widget reads "Current media activity" (it also covers Jellyfin / Emby). Now-playing cards and history entries open the app-global quick-look (TMDb id from Tracearr's v2 public API — episodes resolve their show's id, cached a day — with a v1 fallback for older Tracearr), cards get a Plex / Jellyfin / Emby badge, history pages through v2 cursors, and the users table derives "Last seen" from the 100 most recent plays when Tracearr doesn't report it.
+
 ## [1.2.0] - 2026-08-29
 
 ### Fixed

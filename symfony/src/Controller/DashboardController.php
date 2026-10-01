@@ -4,11 +4,14 @@ namespace App\Controller;
 
 use App\Entity\ServiceInstance;
 use App\Repository\Media\WatchlistItemRepository;
+use App\Service\ActivitySource;
+use App\Service\ConfigService;
 use App\Service\HealthService;
 use App\Service\Media\JellyseerrClient;
 use App\Service\Media\RadarrClient;
 use App\Service\Media\SonarrClient;
 use App\Service\Media\TautulliClient;
+use App\Service\Media\TracearrClient;
 use App\Service\Media\TmdbClient;
 use App\Service\ServiceInstanceProvider;
 use Psr\Log\LoggerInterface;
@@ -64,7 +67,30 @@ class DashboardController extends AbstractController
         private readonly CacheInterface $cache,
         private readonly TautulliClient $tautulli,
         private readonly \App\Service\DashboardLayoutService $layout,
+        // Tracearr — fallback source for the activity widget. Nullable + last
+        // so the positional constructor calls in DashboardControllerTest hold.
+        private readonly ?TracearrClient $tracearr = null,
+        // Reads the activity-source preference; nullable + last for the same
+        // positional-constructor reason (null → auto).
+        private readonly ?ConfigService $config = null,
     ) {}
+
+    /**
+     * Which service feeds the "current activity" widget — the admin
+     * preference via ActivitySource (auto = Tautulli first, unchanged
+     * behaviour), falling back to whichever one is configured.
+     */
+    private function activitySource(): ?string
+    {
+        return ActivitySource::resolve(
+            $this->config?->get(ActivitySource::SETTING),
+            fn(string $service) => match ($service) {
+                'tautulli' => $this->health->isConfigured('tautulli'),
+                'tracearr' => $this->tracearr !== null && $this->health->isConfigured('tracearr'),
+                default    => false,
+            },
+        );
+    }
 
     /**
      * #30 — wrap an expensive upstream aggregate in a short shared cache.
@@ -157,6 +183,7 @@ class DashboardController extends AbstractController
             'jellyseerr' => $this->health->isConfigured('jellyseerr'),
             'tmdb'       => $this->health->isConfigured('tmdb'),
             'tautulli'   => $this->health->isConfigured('tautulli'),
+            'tracearr'   => $this->health->isConfigured('tracearr'),
         ];
 
         return $this->render('dashboard/index.html.twig', [
@@ -257,26 +284,32 @@ class DashboardController extends AbstractController
     }
 
     /**
-     * Async fragment — current Plex activity from Tautulli. Skipped entirely
-     * (empty body → hidden client-side) when Tautulli isn't configured /
-     * enabled. Otherwise renders the widget body; the fragment re-fetches on a
-     * 10 s interval (see index.html.twig) and fails open to an error state, so
-     * a down/misconfigured Tautulli never breaks the dashboard.
+     * Async fragment — current media activity from Tautulli, or from Tracearr
+     * when Tautulli isn't set up (see activitySource()). Skipped entirely
+     * (empty body → hidden client-side) when neither is configured / enabled.
+     * Otherwise renders the widget body; the fragment re-fetches on a 10 s
+     * interval (see index.html.twig) and fails open to an error state, so a
+     * down/misconfigured source never breaks the dashboard.
      */
     #[Route('/tableau-de-bord/widget/plex', name: 'app_dashboard_widget_plex')]
     public function widgetPlex(): Response
     {
-        if (!$this->health->isConfigured('tautulli')) {
+        $source = $this->activitySource();
+        if ($source === null) {
             return new Response('');
         }
         set_time_limit(60);
 
-        $activity = $this->tautulli->getActivity();
-
         // History changes slowly; cache it ~60s so the 10s now-playing poll
-        // doesn't hit get_history every time. The relative time label is now
-        // formatted in the template via the relative_date Twig filter.
-        $history = $this->cached('plex_history', fn() => $this->tautulli->getHistory(8));
+        // doesn't hit the history endpoint every time. The relative time label
+        // is formatted in the template via the relative_date Twig filter.
+        if ($source === 'tracearr') {
+            $activity = $this->tracearr->getActivity();
+            $history  = $this->cached('tracearr_history', fn() => $this->tracearr->getHistory(null, 8)['rows']);
+        } else {
+            $activity = $this->tautulli->getActivity();
+            $history  = $this->cached('plex_history', fn() => $this->tautulli->getHistory(8));
+        }
 
         $streaming = ($activity['streamCount'] ?? 0) > 0;
 
@@ -284,6 +317,7 @@ class DashboardController extends AbstractController
             'plex'        => $activity,
             'plex_history'=> $history,
             'plex_tab'    => $streaming ? 'now' : 'recent',
+            'plex_source' => $source,
         ]);
     }
 
@@ -689,7 +723,7 @@ class DashboardController extends AbstractController
             }
         }
 
-        $labels = ['prowlarr' => 'Prowlarr', 'jellyseerr' => 'Seerr', 'qbittorrent' => 'qBittorrent', 'tmdb' => 'TMDb', 'tautulli' => 'Tautulli'];
+        $labels = ['prowlarr' => 'Prowlarr', 'jellyseerr' => 'Seerr', 'qbittorrent' => 'qBittorrent', 'tmdb' => 'TMDb', 'tautulli' => 'Tautulli', 'tracearr' => 'Tracearr'];
         foreach ($labels as $service => $label) {
             try {
                 $s = $this->health->statusFor($service);

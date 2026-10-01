@@ -5,6 +5,11 @@ All notable changes to Prismarr are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **Transmission now shows its real logo.** The sidebar entry and the Transmission page title use the Dashboard Icons `transmission.svg` (already shipped for the admin settings card) instead of the generic red droplet, and Transmission gets its own chip — with its logo — in the dashboard's services-health widget.
+
 ## [1.2.0] - 2026-08-29
 
 ### Fixed

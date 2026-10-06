@@ -467,6 +467,14 @@ dashboard:
       cast: 'Cast:'
       studio: 'Studio:'
       tech: Stream
+  emby:
+    title: Current Emby activity
+    settings_cta: 'Settings →'
+    empty: No active Emby streams
+    error:
+      unconfigured: Emby is not configured
+      unreachable: Unable to reach Emby
+      auth: Invalid Emby API key or unauthorized
   type:
     film: Movie
     series: TV Show
@@ -691,6 +699,7 @@ admin:
       nzbget: Usenet downloader
       gluetun: 'VPN / port forwarding'
       tautulli: 'Plex activity (via Tautulli)'
+      emby: 'Emby now playing'
     sidebar_toggle: Menu
     sidebar_toggle_title: Show in sidebar
     status:

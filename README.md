@@ -115,6 +115,7 @@ queued for later.
 - **Downloads:** full qBittorrent dashboard (server-side pagination, sorting, filters, drag-and-drop upload) plus dedicated SABnzbd and NZBGet pages. Optional Gluetun integration.
 - **Discovery:** TMDb landing page with recommendations and trending, watchlist, an explorer with filters, and deep-links into your library.
 - **Plex activity (Tautulli):** optional read-only page (now playing, watch stats, graphs, history) plus a "Current Plex activity" dashboard widget. The API key stays server-side and responses are sanitised.
+- **Emby activity:** optional "Current Emby activity" dashboard widget read straight from Emby Server's Sessions API (no Tautulli-style add-on needed). Same read-only, server-side-key, sanitised-payload rules as the Plex widget.
 - **Theming:** a full instance theme chosen in `/admin/settings → Display` from a catalogue of glance-style presets (HSL colour model resolved to CSS variables server-side, light and dark). The default reproduces the previous dark look exactly.
 - **Preferences:** accent colour, UI density, timezone, date format, English / French UI, settings export / import (credentials always stripped).
 - **Security:** Symfony auth with login rate-limiter, non-root container, dynamic CSP, SSRF protection on user-provided URLs, CSRF on every mutation.

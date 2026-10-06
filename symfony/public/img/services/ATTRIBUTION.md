@@ -11,6 +11,10 @@ from the **Dashboard Icons** collection:
 Tautulli's brand amber (`#e5a00d`); it is not taken from the Dashboard
 Icons set.
 
+`emby.svg` is likewise an original, simplified mark drawn for Prismarr in
+Emby's brand green (`#52b54b`); it is not taken from the Dashboard Icons
+set and is not Emby's official logo.
+
 `deluge.svg` — original minimal droplet drawn for Prismarr (Deluge brand
 color #3e7bbf), not the official Deluge logo.
 

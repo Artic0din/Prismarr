@@ -9,6 +9,7 @@ use App\Service\Media\JellyseerrClient;
 use App\Service\Media\RadarrClient;
 use App\Service\Media\SonarrClient;
 use App\Service\Media\TautulliClient;
+use App\Service\Media\EmbyClient;
 use App\Service\Media\TmdbClient;
 use App\Service\ServiceInstanceProvider;
 use Psr\Log\LoggerInterface;
@@ -64,6 +65,9 @@ class DashboardController extends AbstractController
         private readonly CacheInterface $cache,
         private readonly TautulliClient $tautulli,
         private readonly \App\Service\DashboardLayoutService $layout,
+        // Nullable + last: DashboardControllerTest builds this controller
+        // positionally, so a new dependency must not shift the signature.
+        private readonly ?EmbyClient $emby = null,
     ) {}
 
     /**
@@ -157,6 +161,7 @@ class DashboardController extends AbstractController
             'jellyseerr' => $this->health->isConfigured('jellyseerr'),
             'tmdb'       => $this->health->isConfigured('tmdb'),
             'tautulli'   => $this->health->isConfigured('tautulli'),
+            'emby'       => $this->health->isConfigured('emby'),
         ];
 
         return $this->render('dashboard/index.html.twig', [
@@ -284,6 +289,25 @@ class DashboardController extends AbstractController
             'plex'        => $activity,
             'plex_history'=> $history,
             'plex_tab'    => $streaming ? 'now' : 'recent',
+        ]);
+    }
+
+    /**
+     * Async fragment — current Emby playback, straight from the Emby
+     * Sessions API (no Tautulli-style middleman exists for Emby). Empty body
+     * when Emby isn't configured / enabled; otherwise the widget body, polled
+     * every 10 s (see index.html.twig). Fails open like the Plex widget.
+     */
+    #[Route('/tableau-de-bord/widget/emby', name: 'app_dashboard_widget_emby')]
+    public function widgetEmby(): Response
+    {
+        if ($this->emby === null || !$this->health->isConfigured('emby')) {
+            return new Response('');
+        }
+        set_time_limit(60);
+
+        return $this->render('dashboard/_emby_activity.html.twig', [
+            'emby' => $this->emby->getActivity(),
         ]);
     }
 
@@ -689,7 +713,7 @@ class DashboardController extends AbstractController
             }
         }
 
-        $labels = ['prowlarr' => 'Prowlarr', 'jellyseerr' => 'Seerr', 'qbittorrent' => 'qBittorrent', 'tmdb' => 'TMDb', 'tautulli' => 'Tautulli'];
+        $labels = ['prowlarr' => 'Prowlarr', 'jellyseerr' => 'Seerr', 'qbittorrent' => 'qBittorrent', 'tmdb' => 'TMDb', 'tautulli' => 'Tautulli', 'emby' => 'Emby'];
         foreach ($labels as $service => $label) {
             try {
                 $s = $this->health->statusFor($service);

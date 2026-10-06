@@ -5,6 +5,14 @@ All notable changes to Prismarr are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Emby activity widget (optional).** A "Current Emby activity" dashboard card fed directly by Emby Server's Sessions API, for people who run Emby instead of Plex. Configure the server URL and an API key under `/admin/settings → Monitoring` (per-service kill switch, Test connection and health chip like every other service). The card is the Plex/Tautulli widget with an Emby source: one row per active stream with poster, user, client, Direct Play / Direct Stream / Transcode badge, LAN/WAN, resolution, HDR / Dolby Vision, bitrate and a progress bar, refreshed every 10 s, and a click on a title opens the TMDb quick-look. Read-only: nothing can pause, stop or change playback. The API key stays server-side (posters are proxied), and the payload is reduced to an allow-list before it reaches the browser, so remote addresses, device ids, tokens and file paths never leave the server.
+
+### Fixed
+- Settings: the Tautulli card's Test button always answered "Fill in the URL and credentials first" because the service was missing from the Test button's field map; it now tests the URL and API key like the other cards.
+
 ## [1.2.0] - 2026-08-29
 
 ### Fixed

@@ -10,6 +10,7 @@ use App\Service\Media\RadarrClient;
 use App\Service\Media\SonarrClient;
 use App\Service\Media\TautulliClient;
 use App\Service\Media\TmdbClient;
+use App\Service\Media\TransmissionClient;
 use App\Service\ServiceInstanceProvider;
 use Psr\Log\LoggerInterface;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
@@ -34,6 +35,7 @@ class DashboardController extends AbstractController
     private const MAX_RECOMMENDATIONS = 16;
     private const MAX_RECENT          = 16;
     private const MAX_WATCHLIST       = 16;
+    private const MAX_TRANSMISSION    = 5;
     // #30 — short server-side cache for the heavy per-widget upstream calls.
     // Radarr/Sonarr aren't client-cached (unlike TMDb), so the async widget
     // fragments would each hit them live; this dedupes the calls shared across
@@ -64,6 +66,9 @@ class DashboardController extends AbstractController
         private readonly CacheInterface $cache,
         private readonly TautulliClient $tautulli,
         private readonly \App\Service\DashboardLayoutService $layout,
+        // Transmission — optional torrent widget. Nullable + last so existing
+        // positional constructions (tests) keep working.
+        private readonly ?TransmissionClient $transmission = null,
     ) {}
 
     /**
@@ -157,6 +162,7 @@ class DashboardController extends AbstractController
             'jellyseerr' => $this->health->isConfigured('jellyseerr'),
             'tmdb'       => $this->health->isConfigured('tmdb'),
             'tautulli'   => $this->health->isConfigured('tautulli'),
+            'transmission' => $this->transmission !== null && $this->health->isConfigured('transmission'),
         ];
 
         return $this->render('dashboard/index.html.twig', [
@@ -284,6 +290,34 @@ class DashboardController extends AbstractController
             'plex'        => $activity,
             'plex_history'=> $history,
             'plex_tab'    => $streaming ? 'now' : 'recent',
+        ]);
+    }
+
+    /**
+     * Async fragment — Transmission transfer summary: global speeds, state
+     * counts and the torrents currently downloading. Skipped (empty body →
+     * hidden client-side) when Transmission isn't configured / enabled.
+     * Re-fetched on a 10 s interval (see index.html.twig); a failed RPC
+     * renders the unreachable state instead of breaking the dashboard.
+     */
+    #[Route('/tableau-de-bord/widget/transmission', name: 'app_dashboard_widget_transmission')]
+    public function widgetTransmission(): Response
+    {
+        if ($this->transmission === null || !$this->health->isConfigured('transmission')) {
+            return new Response('');
+        }
+        set_time_limit(60);
+
+        $torrents = $this->safeFetch('transmission.torrents', fn() => $this->transmission->getTorrents());
+        $error    = $torrents === null || $this->transmission->isUnavailable() || $this->transmission->getLastError() !== null;
+        $torrents ??= [];
+        $active   = array_values(array_filter($torrents, fn($t) => $t['state'] === 'downloading'));
+        usort($active, fn($a, $b) => $b['dlspeed'] <=> $a['dlspeed']);
+
+        return $this->render('dashboard/_transmission.html.twig', [
+            'trs_error'  => $error,
+            'trs_stats'  => $error ? null : $this->transmission->getStats($torrents),
+            'trs_active' => array_slice($active, 0, self::MAX_TRANSMISSION),
         ]);
     }
 

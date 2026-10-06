@@ -5,6 +5,11 @@ All notable changes to Prismarr are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Transmission dashboard widget (optional).** A new "Transmission transfers" section, available in the dashboard layout editor (reorder / hide) and shown only when Transmission is configured: download / seeding / paused counts, global download and upload speeds, and the five fastest torrents currently downloading with their progress, plus a link to the Transmission page. It hydrates after first paint, refreshes every 10 s (paused while the tab is hidden), and falls back to an "unreachable" message instead of breaking the dashboard when Transmission is down.
+
 ## [1.2.0] - 2026-08-29
 
 ### Fixed

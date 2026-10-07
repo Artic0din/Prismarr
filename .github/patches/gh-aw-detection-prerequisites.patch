@@ -1,0 +1,120 @@
+diff --git a/pkg/workflow/threat_detection_external.go b/pkg/workflow/threat_detection_external.go
+index 5227e16..650ce84 100644
+--- a/pkg/workflow/threat_detection_external.go
++++ b/pkg/workflow/threat_detection_external.go
+@@ -537 +537,3 @@ func (c *Compiler) buildExternalDetectorExecutionStep(data *WorkflowData) []stri
+-	executionCondition := detectionStepCondition + " && steps.threat_detect_install.outcome == 'success'"
++	// A failed prerequisite in this job must prevent detector execution, even
++	// though the job itself may start after an earlier agent job failed.
++	executionCondition := "success() && " + detectionStepCondition + " && steps.threat_detect_install.outcome == 'success'"
+diff --git a/pkg/workflow/threat_detection_prerequisites_test.go b/pkg/workflow/threat_detection_prerequisites_test.go
+new file mode 100644
+index 0000000..e6b960b
+--- /dev/null
++++ b/pkg/workflow/threat_detection_prerequisites_test.go
+@@ -0,0 +1,105 @@
++//go:build !integration
++
++package workflow
++
++import (
++	"strings"
++	"testing"
++
++	"gopkg.in/yaml.v3"
++)
++
++func TestExternalDetectorRequiresSuccessfulPrerequisites(t *testing.T) {
++	for _, engineID := range []string{"claude", "codex", "copilot"} {
++		t.Run(engineID, func(t *testing.T) {
++			data := &WorkflowData{
++				AI: engineID,
++				SafeOutputs: &SafeOutputsConfig{
++					ThreatDetection: &ThreatDetectionConfig{ContinueOnError: boolPtr(false)},
++				},
++			}
++			content := strings.Join(NewCompiler().buildExternalDetectorExecutionStep(data), "")
++			var steps []struct {
++				ID string `yaml:"id"`
++				If string `yaml:"if"`
++			}
++			if err := yaml.Unmarshal([]byte(content), &steps); err != nil {
++				t.Fatal(err)
++			}
++			if len(steps) != 1 || steps[0].ID != "detection_agentic_execution" {
++				t.Fatalf("expected one external detector execution step, got %#v", steps)
++			}
++			if !strings.HasPrefix(steps[0].If, "success() && ") {
++				t.Fatalf("detector can launch after a failed prerequisite: %s", steps[0].If)
++			}
++			for _, guard := range []string{
++				"steps.detection_guard.outputs.run_detection == 'true'",
++				"steps.threat_detect_install.outcome == 'success'",
++			} {
++				if !strings.Contains(steps[0].If, guard) {
++					t.Errorf("missing existing detector guard %q: %s", guard, steps[0].If)
++				}
++			}
++		})
++	}
++}
++
++func TestFailedDetectionPreparationRetainsDiagnosticsAndAgentFailureEntry(t *testing.T) {
++	data := &WorkflowData{
++		AI:       "claude",
++		Name:     "Preparation failure regression",
++		Features: map[string]any{"gh-aw-detection": true},
++		SafeOutputs: &SafeOutputsConfig{
++			ThreatDetection: &ThreatDetectionConfig{
++				ContinueOnError: boolPtr(false),
++				Steps: []any{map[string]any{
++					"id": "reflection_prepare", "name": "Fail trusted preparation", "run": "exit 1",
++				}},
++			},
++		},
++	}
++	job, err := NewCompiler().buildDetectionJob(data)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if job == nil {
++		t.Fatal("mandatory detection job was omitted")
++	}
++	if !strings.Contains(job.If, "always()") || !strings.Contains(job.If, "needs.agent.result != 'skipped'") {
++		t.Fatalf("detection must still start after an agent failure: %s", job.If)
++	}
++	var steps []struct {
++		ID   string `yaml:"id"`
++		Name string `yaml:"name"`
++		If   string `yaml:"if"`
++	}
++	if err := yaml.Unmarshal([]byte(strings.Join(job.Steps, "")), &steps); err != nil {
++		t.Fatal(err)
++	}
++	prepareIndex, executeIndex, diagnostics := -1, -1, 0
++	for i, step := range steps {
++		switch step.ID {
++		case "reflection_prepare":
++			prepareIndex = i
++		case "detection_agentic_execution":
++			executeIndex = i
++		case "detection_conclusion":
++			if step.If != "always()" {
++				t.Errorf("detection conclusion must survive preparation failure: %s", step.If)
++			}
++			diagnostics++
++		}
++		if step.Name == "Upload threat detection artifact" {
++			if step.If != "always()" {
++				t.Errorf("detection log upload must survive preparation failure: %s", step.If)
++			}
++			diagnostics++
++		}
++	}
++	if prepareIndex < 0 || executeIndex <= prepareIndex {
++		t.Fatalf("preparation must precede detector execution: preparation=%d execution=%d", prepareIndex, executeIndex)
++	}
++	if diagnostics != 2 {
++		t.Fatalf("expected conclusion and log-upload diagnostics, found %d", diagnostics)
++	}
++}

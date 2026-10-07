@@ -1,0 +1,2 @@
+#!/bin/sh
+exec python3 /trusted/detector_controller.py "$@"

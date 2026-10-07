@@ -1,0 +1,7 @@
+{
+  "name": "repo-assist-expression-tests",
+  "private": true,
+  "dependencies": {
+    "@actions/expressions": "0.3.61"
+  }
+}

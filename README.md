@@ -381,6 +381,12 @@ a PR. The setup wizard will pick up the new locale automatically.
 
 ---
 
+## Fork automation
+
+This fork includes [Repo Assist](docs/repo-assist.md), a daily Claude subscription workflow for issue triage and bounded documentation work in `Artic0din/Prismarr`.
+It requires owner credential setup and a verified first run before it is operational.
+It does not publish untested application changes or contact the upstream repository.
+
 ## Contributing
 
 Contributions are welcome - please open an issue first to discuss the scope

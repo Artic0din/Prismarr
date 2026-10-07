@@ -1,0 +1,131 @@
+name: Validate agentic workflows
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agentic-validation-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate agentic workflows
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14.7"
+      - name: Set up locked Repo Assist CLI installer
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Install locked Repo Assist CLI
+        # Installation runs no Claude session and this step receives no credentials.
+        run: npm ci --prefix .github/repo-assist-cli --no-audit --no-fund
+      - name: Install pinned repository jq for offline integration
+        run: python .github/repo-assist-worker/tool_prerequisites.py "$RUNNER_TOOL_CACHE"
+      - name: Install pinned native detector for offline integration
+        run: |
+          mkdir -p "$RUNNER_TEMP/repo-assist-native"
+          binary="$RUNNER_TEMP/repo-assist-native/threat-detect"
+          curl --fail --silent --show-error --location --retry 3 \
+            https://github.com/github/gh-aw-threat-detection/releases/download/v0.5.2/threat-detect-linux-amd64 \
+            --output "$binary"
+          printf '%s  %s\n' b4ecda6a8f1ee09913c40b58e5e9d3337d2173618d41b1bfdef9207e4e7959b9 "$binary" | sha256sum --check
+          chmod 755 "$binary"
+      - name: Install policy test dependency
+        run: python -m pip install PyYAML==6.0.3
+      - name: Check out reviewed compiler source
+        uses: actions/checkout@v7
+        with:
+          repository: github/gh-aw
+          ref: d534c311af32e1e3d26f2015d9b95d738633a2b5 # v0.90.0
+          path: .repo-assist-compiler
+          persist-credentials: false
+      - name: Set up compiler Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: "1.27.0"
+          cache-dependency-path: .repo-assist-compiler/go.sum
+      - name: Build reviewed agentic workflow compiler
+        run: bash .github/scripts/build-repo-assist-compiler.sh .repo-assist-compiler
+      - name: Install pinned GitHub expression evaluator
+        run: npm ci --prefix .github/tests/expression-evaluator --ignore-scripts --no-audit --no-fund
+      - name: Install actionlint
+        env:
+          ACTIONLINT_VERSION: "1.7.12"
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          archive="$RUNNER_TEMP/actionlint.tar.gz"
+          curl --fail --silent --show-error --location \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
+            --output "$archive"
+          echo "$ACTIONLINT_SHA256  $archive" | sha256sum --check --strict
+          mkdir -p "$RUNNER_TEMP/actionlint"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/actionlint" actionlint
+          echo "$RUNNER_TEMP/actionlint" >> "$GITHUB_PATH"
+      - name: Verify generated Repo Assist workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          "$RUNNER_TEMP/gh-aw-repo-assist" compile repo-assist --strict --validate --shellcheck --no-check-update --action-mode action --action-tag v0.90.0
+          python3 .github/scripts/transform-repo-assist-subscription.py .github/workflows/repo-assist.lock.yml
+          git ls-files --error-unmatch .github/workflows/repo-assist.lock.yml .github/aw/actions-lock.json
+          git diff --exit-code -- .github/workflows/repo-assist.lock.yml .github/aw/actions-lock.json
+      - name: Verify pinned reflection helper digest
+        run: |
+          python - <<'PY'
+          import hashlib
+          import re
+          import subprocess
+          from pathlib import Path
+
+          import yaml
+
+          lock = yaml.load(Path(".github/workflows/repo-assist.lock.yml").read_text(), Loader=yaml.BaseLoader)
+          refs = {
+              step["uses"].split("@", 1)[1]
+              for job in lock["jobs"].values()
+              for step in job["steps"]
+              if step.get("uses", "").startswith("github/gh-aw-actions/setup@")
+          }
+          if len(refs) != 1:
+              raise SystemExit("Expected one immutable Repo Assist setup action pin")
+          ref = refs.pop()
+          if not re.fullmatch(r"[0-9a-f]{40}", ref):
+              raise SystemExit("Repo Assist setup action must use a commit SHA")
+          source = Path(".github/workflows/repo-assist.md").read_text().split("---", 2)[1]
+          config = yaml.safe_load(source)
+          expected = config["safe-outputs"]["threat-detection"]["steps"][0]["env"]["REPO_ASSIST_REFLECT_SHA256"]
+          url = f"https://raw.githubusercontent.com/github/gh-aw-actions/{ref}/setup/js/awf_reflect.cjs"
+          helper = subprocess.check_output(["curl", "--fail", "--silent", "--show-error", "--location", url])
+          actual = hashlib.sha256(helper).hexdigest()
+          if actual != expected:
+              raise SystemExit(f"Pinned reflection helper digest mismatch: {actual} != {expected}")
+          print(f"Verified exact setup action {ref} reflection helper SHA-256: {actual}")
+          PY
+      - name: Test automation policy
+        env:
+          # The official CLI parser smoke runs with no credentials or network.
+          REPO_ASSIST_REQUIRE_CLI: '1'
+          REPO_ASSIST_THREAT_DETECT_BINARY: ${{ runner.temp }}/repo-assist-native/threat-detect
+        run: python -m unittest discover -s .github/tests -p 'test_repo_assist*.py' -v
+      - name: Verify whole-process worker isolation without model access
+        env:
+          REPO_ASSIST_REQUIRE_DOCKER: '1'
+        run: python -m unittest discover -s .github/tests -p test_repo_assist_worker.py -v
+      - name: Test Prismarr installation policy
+        run: python -m unittest discover -s .github/tests -p test_prismarr_contract.py -v
+      - name: Check workflow syntax and shell commands
+        run: actionlint .github/workflows/agentic-workflows.yml .github/workflows/repo-assist.lock.yml .github/workflows/ci.yml

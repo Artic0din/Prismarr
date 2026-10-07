@@ -1,0 +1,119 @@
+#!/usr/bin/env python3
+"""Forward gh arguments to the policy-enforcing CLI sidecar using Python 3 only."""
+
+import base64
+import http.client
+import json
+import os
+import signal
+import sys
+from types import FrameType
+from urllib.parse import SplitResult, urlsplit
+
+DEFAULT_PROXY_URL = "http://172.30.0.50:11000"
+TIMEOUT_SECONDS = 60
+MAX_STDIN_BYTES = 512 * 1024
+MAX_REQUEST_BYTES = 1024 * 1024
+MAX_RESPONSE_BYTES = 32 * 1024 * 1024
+
+
+class ProxyError(Exception):
+    pass
+
+
+def deadline_expired(signum: int, frame: FrameType | None) -> None:
+    raise TimeoutError("CLI proxy deadline expired")
+
+
+def proxy_url(value: str) -> SplitResult:
+    try:
+        value.encode("ascii")
+        parsed = urlsplit(value)
+        if (any(ord(char) <= 32 or ord(char) == 127 for char in value)
+                or parsed.scheme not in {"http", "https"} or not parsed.hostname
+                or parsed.username is not None or parsed.password is not None
+                or parsed.query or parsed.fragment or parsed.port == 0):
+            raise ValueError
+        return parsed
+    except (ValueError, UnicodeError):
+        raise ProxyError("invalid AWF_CLI_PROXY_URL") from None
+
+
+def request_body(arguments: list[str]) -> bytes:
+    stdin = b"" if sys.stdin.isatty() else sys.stdin.buffer.read(MAX_STDIN_BYTES + 1)
+    if len(stdin) > MAX_STDIN_BYTES:
+        raise ProxyError("stdin exceeds CLI proxy size limit")
+    body = json.dumps({"args": arguments, "cwd": os.getcwd(),
+                       "stdin": base64.b64encode(stdin).decode("ascii")},
+                      separators=(",", ":")).encode("utf-8")
+    if len(body) > MAX_REQUEST_BYTES:
+        raise ProxyError("request exceeds CLI proxy size limit")
+    return body
+
+
+def execute(url: SplitResult, body: bytes) -> tuple[int, bytes]:
+    # HTTPConnection ignores proxy environment variables and never follows redirects.
+    connection_class = http.client.HTTPSConnection if url.scheme == "https" else http.client.HTTPConnection
+    connection = connection_class(url.hostname, url.port, timeout=TIMEOUT_SECONDS)
+    try:
+        connection.request("POST", url.path.rstrip("/") + "/exec", body=body,
+                           headers={"Content-Type": "application/json"})
+        response = connection.getresponse()
+        data = response.read(MAX_RESPONSE_BYTES + 1)
+        if len(data) > MAX_RESPONSE_BYTES:
+            raise ProxyError("response exceeds CLI proxy size limit")
+        if response.length not in (None, 0):
+            raise ProxyError("CLI proxy returned an incomplete response")
+        return response.status, data
+    finally:
+        connection.close()
+
+
+def decode_response(status: int, data: bytes) -> tuple[bytes, bytes, int]:
+    try:
+        value = json.loads(data)
+    except (ValueError, UnicodeError, RecursionError):
+        value = None
+    if status != 200:
+        message = f"CLI proxy returned HTTP {status}"
+        if isinstance(value, dict) and isinstance(value.get("error"), str):
+            detail = "".join(char for char in value["error"][:1024] if char.isprintable())
+            if detail:
+                message += ": " + detail
+        raise ProxyError(message)
+    if (not isinstance(value, dict) or not isinstance(value.get("stdout"), str)
+            or not isinstance(value.get("stderr"), str)
+            or type(value.get("exitCode")) is not int or not 0 <= value["exitCode"] <= 255):
+        raise ProxyError("CLI proxy returned an invalid response")
+    try:
+        return value["stdout"].encode("utf-8"), value["stderr"].encode("utf-8"), value["exitCode"]
+    except UnicodeError:
+        raise ProxyError("CLI proxy returned an invalid response") from None
+
+
+def main() -> int:
+    # A socket timeout alone cannot bound an open stdin pipe or a trickling response.
+    signal.signal(signal.SIGALRM, deadline_expired)
+    signal.setitimer(signal.ITIMER_REAL, TIMEOUT_SECONDS)
+    try:
+        url = proxy_url(os.environ.get("AWF_CLI_PROXY_URL") or DEFAULT_PROXY_URL)
+        status, data = execute(url, request_body(sys.argv[1:]))
+        stdout, stderr, exit_code = decode_response(status, data)
+        sys.stdout.buffer.write(stdout)
+        sys.stdout.buffer.flush()
+        sys.stderr.buffer.write(stderr)
+        sys.stderr.buffer.flush()
+        return exit_code
+    except ProxyError as error:
+        print(f"gh: {error}", file=sys.stderr)
+    except TimeoutError:
+        print("gh: CLI proxy timed out", file=sys.stderr)
+    except (OSError, http.client.HTTPException):
+        print("gh: CLI proxy unavailable or transport failed", file=sys.stderr)
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

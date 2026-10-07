@@ -12,6 +12,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  agentic-validation:
+    name: Repo Assist validation
+    permissions:
+      contents: read
+    uses: ./.github/workflows/agentic-workflows.yml
+
   check:
     name: make check (lint + Twig + PHPUnit)
     runs-on: ubuntu-latest
@@ -41,11 +47,12 @@ jobs:
 
       - name: Wait for /api/health
         run: |
-          for i in $(seq 1 60); do
+          for attempt in $(seq 1 60); do
             if docker exec prismarr curl -fsS http://localhost:7070/api/health >/dev/null 2>&1; then
               echo "Container is healthy"
               exit 0
             fi
+            echo "Waiting for container health ($attempt/60)"
             sleep 2
           done
           echo "Container did not become healthy in time"
@@ -64,3 +71,18 @@ jobs:
       - name: Container logs on failure
         if: failure()
         run: docker logs prismarr
+
+  ci-passed:
+    name: CI passed
+    if: always()
+    needs: [check, agentic-validation]
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Require application and automation checks
+        env:
+          CHECK_RESULT: ${{ needs.check.result }}
+          AGENTIC_RESULT: ${{ needs.agentic-validation.result }}
+        run: |
+          test "$CHECK_RESULT" = success
+          test "$AGENTIC_RESULT" = success
